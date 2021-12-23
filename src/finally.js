@@ -20,4 +20,4 @@ function finallyConstructor(callback) {
   );
 }
 
-export default finallyConstructor;
+module.exports = finallyConstructor;

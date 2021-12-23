@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  <script>
+    const p = new Promise(resolve => resolve(1));
+    p.then(res1 => console.error('res1->', res1));
+    requestAnimationFrame(() => {
+      console.error('requestAnimationFrame called');
+    })
+    p.then(res2 => console.error('res2->', res2));
+    setTimeout(() => {
+      console.error('timeout01 called');
+    }, 10)
+    setTimeout(() => {
+      console.error('timeout02 called');
+    }, 10)
+    setTimeout(() => {
+      console.error('timeout03 called');
+    }, 100)
+    p.then(res3 => console.error('res3->', res3));
+    setTimeout(() => {
+      p.then(res4 => console.error('res4->', res4));
+    }, 50)
+  </script>
+</body>
+</html>

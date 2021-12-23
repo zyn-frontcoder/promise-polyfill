@@ -46,4 +46,4 @@ function allSettled(arr) {
   });
 }
 
-export default allSettled;
+module.exports = allSettled;

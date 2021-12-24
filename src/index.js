@@ -124,6 +124,11 @@ function resolve(self, newValue) {
     self._value = newValue;
     finale(self);
   } catch (e) {
+    /**
+     * onRejected进入的条件：运行错误/状态变为Rejected
+     * @test
+     * new Promise(resolve => a.toString()).then(null, err => console.error('err=>', err))
+     */
     reject(self, e);
   }
 }
@@ -285,7 +290,14 @@ function Handler(onFulfilled, onRejected, promise) {
 }
 
 /**
- * 详见handle的实现
+ * 参考handle中对catch的特殊设计
+ * 这里默认调用一次then，只处理onRejected，这样就保证了@运行错误/@rejected未处理，会被捕获
+ * 也意味着，如果在then中处理了无法被catch处理
+ * @test
+ new Promise(resolve => a.toString()).then(null, err => console.error('err=>', err)).catch(err => console.error('catch->', err));
+
+ * @test
+ new Promise(resolve => a.toString()).then(null, err => Promise.reject(1)).catch(err => console.error('catch->', err));
  */
 Promise.prototype['catch'] = function (onRejected) {
   return this.then(null, onRejected);
@@ -429,6 +441,17 @@ Promise.reject = function (value) {
   });
 };
 
+/**
+ * 由第一个确定Promise状态的Promise决定最终的状态
+ * 每个promise都会执行
+ * 
+ * @test
+  const p1 = Promise.resolve(1);
+  const p2 = Promise.reject(2);
+  const p3 = Promise.resolve(3);
+  Promise.race([p1, p2, p3]).then(res => console.error(res));
+ * 
+ */
 Promise.race = function (arr) {
   return new Promise(function (resolve, reject) {
     if (!isArray(arr)) {

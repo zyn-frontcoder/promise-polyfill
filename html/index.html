@@ -8,25 +8,10 @@
 </head>
 <body>
   <script>
-    const p = new Promise(resolve => resolve(1));
-    p.then(res1 => console.error('res1->', res1));
-    requestAnimationFrame(() => {
-      console.error('requestAnimationFrame called');
-    })
-    p.then(res2 => console.error('res2->', res2));
-    setTimeout(() => {
-      console.error('timeout01 called');
-    }, 10)
-    setTimeout(() => {
-      console.error('timeout02 called');
-    }, 10)
-    setTimeout(() => {
-      console.error('timeout03 called');
-    }, 100)
-    p.then(res3 => console.error('res3->', res3));
-    setTimeout(() => {
-      p.then(res4 => console.error('res4->', res4));
-    }, 50)
+    const p1 = Promise.resolve(1);
+    const p2 = new Promise(() => {});
+    const p3 = Promise.resolve(3);
+    Promise.all([p1, p2, p3]).then(res => console.error(res)).catch(err => console.error(err));
   </script>
 </body>
 </html>

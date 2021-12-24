@@ -2,7 +2,6 @@ const promiseFinally = require('./finally');
 const allSettled = require('./allSettled');
 
 var setTimeoutFunc = setTimeout;
-// @ts-ignore
 var setImmediateFunc = typeof setImmediate !== 'undefined' ? setImmediate : null;
 
 function isArray(x) {
@@ -16,6 +15,20 @@ function bind(fn, thisArg) {
     fn.apply(thisArg, arguments);
   };
 }
+
+/**
+ * Promise对象的核心三要素
+ * status: Pending->FullFilled->Rejected->Override
+ * value: resolveValue/rejectValue
+ * handled: handleBy then/catch
+ * 
+ * Promise处理流程分为两类
+ * 1. 对于Promise对象自身的处理
+ * 根据resolve/reject的调用，调通用的handleResolve和handleReject处理，得到{value: resolvedValue，status: handleResolve(resolvedValue)/handleRejected(rejetedValue) }
+ * 2. 调用then时，直接创建一个空promise对象，作为返回值
+ * 调用then的promise对象为pending，将then注册到该promise上 => 返回的新promise {value: returnValueOfThen, status: handleResolve(returnValueOfThen)}
+ * 调用then的promise对象为确定状态 => 返回的新promise {value: returnValueOfThen, status: handleResolve(returnValueOfThen)}
+ */
 
 function Promise(fn) {
   if (!(this instanceof Promise))
@@ -48,9 +61,16 @@ function Promise(fn) {
 /**
  * 1. 执行函数 
  * 2. 为resolve和reject定义实参 => 定义状态改变后的处理逻辑
+ * 
+ * 直接执行fn说明Promise不在意，传入的fn是否是异步，因为回调是在调用resolve/reject才真正触发的
+ * 
+  new Promise(async (resolve) => {
+    await new Promise(resolve => setTimeout(() => resolve(1), 1000));
+    await new Promise(resolve => setTimeout(() => resolve(2), 1000));
+    resolve(2000);
+  }).then(res => console.error('res->', res));
  */
  function doResolve(fn, self) {
-  console.error('doResolve called');
   var done = false; // 标记只允许改变一次状态
   try {
     fn(
@@ -160,9 +180,16 @@ function handle(self, deferred) {
     var cb = self._state === 1 ? deferred.onFulfilled : deferred.onRejected;
 
    /**
-    * then为null时，将当前Promise的值赋值给返回的新Promise
+    * onFullFilled/onRejected为null时，将当前Promise的值赋值给返回的新Promise
+    * 这段逻辑是为catch设计的，如果then中未注册onRejectedCb，那么最终会被下个注册onRejected的then处理，被catch处理
     * @test=>
     * new Promise(resolve => resolve(1)).then(null).then(null).then(res => console.error(res))
+    * 
+    * @test
+    * Promise.reject(1).then(null, reason => console.error('reason->', reason)).catch(err => console.error('err->', err));
+    * 
+    * @test
+    * Promise.reject(1).then(null, reason => console.error('reason->', reason)).then(null, reason => console.error('reason->', reason));
     */
     if (cb === null) {
       (self._state === 1 ? resolve : reject)(deferred.promise, self._value);
@@ -257,8 +284,9 @@ function Handler(onFulfilled, onRejected, promise) {
   this.promise = promise; // 链表设计，指向下一个要处理的promise
 }
 
-
-
+/**
+ * 详见handle的实现
+ */
 Promise.prototype['catch'] = function (onRejected) {
   return this.then(null, onRejected);
 };
@@ -277,32 +305,70 @@ Promise.prototype.then = function (onFulfilled, onRejected) {
 
 Promise.prototype['finally'] = promiseFinally;
 
+/**
+ * Promise.all为每个成员注册then
+ * 在所有成员变为FullFilled进入then，值为每一项resolve的值
+ * 
+ */
 Promise.all = function (arr) {
+  // 包装成一个大的promise
   return new Promise(function (resolve, reject) {
     if (!isArray(arr)) {
       return reject(new TypeError('Promise.all accepts an array'));
     }
 
+    // resolve(args)
     var args = Array.prototype.slice.call(arr);
+
+    /**
+     * 部分成员不是Promise也是可以的
+     * Promise.all([1, 2, 3, new Promise(resolve => setTimeout(() => resolve(1), 1000))]).then(result => console.error('result', result));
+     */
     if (args.length === 0) return resolve([]);
     var remaining = args.length;
 
     function res(i, val) {
       try {
+        // 成员是promise
         if (val && (typeof val === 'object' || typeof val === 'function')) {
           var then = val.then;
           if (typeof then === 'function') {
+            // 成员为promise时，为每个Promise成员注册then,在每个成员状态改变后调用
             then.call(
               val,
               function (val) {
                 res(i, val);
               },
-              reject
+              /**
+               * 在最先出现的成员状态不是FullFilled后，totalPromise立即Rejected
+               * @test
+                const p1 = Promise.reject(1);
+                const p2 = Promise.resolve(2);
+                const p3 = Promise.resolve(3);
+                Promise.all([p1, p2, p3]).then(res => console.error(res)).catch(err => console.error(err));
+              */
+              reject 
             );
             return;
           }
         }
+        // 成员不是promise,就为当前值
         args[i] = val;
+        /**
+         * 在最后一项的状态改变后，totalPromise才能把状态确定为FullFilled，
+         * 这意味着如果单个成员状态一直不确定，会导致Promoise.all创建的新Promise无法确定状态
+         * 所以在API请求时，Promise.all时不合理，最终耗时取决于最慢的那个接口
+         * @test
+         *  const p1 = Promise.resolve(1);
+            const p2 = new Promise(resolve => setTimeout(() => resolve(2), 5000));
+            Promise.all([p1, p2]).then(res => console.error(res));
+          *
+          * @test
+          * const p1 = Promise.resolve(1);
+            const p2 = new Promise(() => {});
+            const p3 = Promise.resolve(3);
+            Promise.all([p1, p2, p3]).then(res => console.error(res)).catch(err => console.error(err));
+         */
         if (--remaining === 0) {
           resolve(args);
         }
@@ -311,6 +377,19 @@ Promise.all = function (arr) {
       }
     }
 
+    /**
+     * Promise.all中的所有成员都会被执行
+     * @test
+      const p1 = Promise.reject(1);
+      const p2 = new Promise(resolve => setTimeout(() => {
+        console.error('p2');
+        resolve();
+      }, 1000));
+      const p3 = new Promise(resolve => setTimeout(() => {
+        console.error('p3');
+      }, 1000))
+      Promise.all([p1, p2]).then(res => console.error(res));
+     */
     for (var i = 0; i < args.length; i++) {
       res(i, args[i]);
     }
@@ -319,6 +398,15 @@ Promise.all = function (arr) {
 
 Promise.allSettled = allSettled;
 
+/**
+ * 立即创建一个新的promise对象,区分value类型
+ * 类属性
+ * @test
+ * Promise.resolve(1).then(res => console.error('res->', res));
+ * 
+ * @test
+ * Promise.resolve(Promise.reject(2)).catch(err => console.error('err->', err));
+ */
 Promise.resolve = function (value) {
   if (value && typeof value === 'object' && value.constructor === Promise) {
     return value;
@@ -329,6 +417,12 @@ Promise.resolve = function (value) {
   });
 };
 
+/**
+ * 立即创建一个rejected的promise对象
+ * 
+ * @test
+ * Promise.reject(Promise.resolve(2)).catch(err => console.error('err->', err));
+ */
 Promise.reject = function (value) {
   return new Promise(function (resolve, reject) {
     reject(value);
